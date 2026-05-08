@@ -31,6 +31,7 @@ source "$CONF_FILE"
 : "${SSH_PORT:?SSH_PORT is not set in secrets.conf}"
 : "${SSH_USERNAME:?SSH_USERNAME is not set in secrets.conf}"
 : "${SSH_KEY_FILE:?SSH_KEY_FILE is not set in secrets.conf}"
+: "${PROJECTS_ROOT:?PROJECTS_ROOT is not set in secrets.conf}"
 : "${REPOS:?REPOS array is not set in secrets.conf}"
 
 # --- Validate key file exists -----------------------------------------------
@@ -66,10 +67,27 @@ FAILED=()
 
 for repo in "${REPOS[@]}"; do
   echo "→ $repo"
+  repo_name="${repo##*/}"
+
+  # Determine .env.production path (override or default)
+  override_key="ENV_PATH_${repo_name//-/_}"
+  if [[ -n "${!override_key:-}" ]]; then
+    env_file="${!override_key}"
+  else
+    env_file="${PROJECTS_ROOT}/${repo_name}/.env.production"
+  fi
+
   if gh secret set SSH_HOST          --body "$SSH_HOST"          --repo "$repo" \
   && gh secret set SSH_PORT          --body "$SSH_PORT"          --repo "$repo" \
   && gh secret set SSH_USERNAME      --body "$SSH_USERNAME"      --repo "$repo" \
   && gh secret set SSH_PRIVATE_KEY   --body "$SSH_PRIVATE_KEY"   --repo "$repo"; then
+    if [[ -f "$env_file" ]]; then
+      encoded=$(base64 -w 0 "$env_file")
+      gh secret set APP_ENV --body "$encoded" --repo "$repo"
+      echo "  APP_ENV set from $env_file"
+    else
+      echo "  APP_ENV skipped (no .env.production found)"
+    fi
     echo "  ✅ done"
   else
     echo "  ❌ failed"

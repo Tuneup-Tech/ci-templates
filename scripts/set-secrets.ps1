@@ -30,16 +30,17 @@ $config = @{}
 Get-Content $ConfFile | ForEach-Object {
     $line = $_.Trim()
     if ($line -match '^#' -or $line -eq '') { return }
-    if ($line -match '^([A-Z_]+)=(.+)$') {
+    if ($line -match '^([A-Za-z0-9_]+)=(.+)$') {
         $val = $Matches[2].Trim().Trim('"').Trim("'")
         $config[$Matches[1]] = $val
     }
 }
 
-$SSH_HOST     = $config["SSH_HOST"]
-$SSH_PORT     = $config["SSH_PORT"]
-$SSH_USERNAME = $config["SSH_USERNAME"]
-$SSH_KEY_FILE = $config["SSH_KEY_FILE"]
+$SSH_HOST      = $config["SSH_HOST"]
+$SSH_PORT      = $config["SSH_PORT"]
+$SSH_USERNAME  = $config["SSH_USERNAME"]
+$SSH_KEY_FILE  = $config["SSH_KEY_FILE"]
+$PROJECTS_ROOT = $config["PROJECTS_ROOT"]
 
 # --- Parse REPOS array (lines inside REPOS=( ... )) -------------------------
 $inRepos = $false
@@ -89,7 +90,6 @@ if ($LASTEXITCODE -ne 0) {
 # --- Collect secret values --------------------------------------------------
 $SSH_PRIVATE_KEY = Get-Content $SSH_KEY_FILE -Raw
 
-
 Write-Host ""
 Write-Host "Pushing secrets to $($REPOS.Count) repos..." -ForegroundColor Cyan
 Write-Host "   Host : ${SSH_HOST}:${SSH_PORT}"
@@ -107,6 +107,23 @@ foreach ($repo in $REPOS) {
         gh secret set SSH_PORT        --body $SSH_PORT            --repo $repo
         gh secret set SSH_USERNAME    --body $SSH_USERNAME        --repo $repo
         gh secret set SSH_PRIVATE_KEY --body $SSH_PRIVATE_KEY     --repo $repo
+
+        # --- APP_ENV: look for .env.production ---
+        $repoName    = ($repo -split '/')[-1]
+        $overrideKey = "ENV_PATH_" + ($repoName -replace '-','_')
+        if ($config[$overrideKey]) {
+            $envFile = $config[$overrideKey]
+        } else {
+            $envFile = Join-Path $PROJECTS_ROOT "$repoName\.env.production"
+        }
+        if (Test-Path $envFile) {
+            $encoded = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($envFile))
+            gh secret set APP_ENV --body $encoded --repo $repo
+            Write-Host "   APP_ENV set from $envFile" -ForegroundColor DarkCyan
+        } else {
+            Write-Host "   APP_ENV skipped (no .env.production found)" -ForegroundColor DarkGray
+        }
+
         Write-Host "   OK" -ForegroundColor Green
     } catch {
         Write-Host "   FAILED: $_" -ForegroundColor Red

@@ -34,6 +34,8 @@ on:
         required: true
       SSH_PRIVATE_KEY:
         required: true
+      APP_ENV:
+        required: false
 
 jobs:
   deploy:
@@ -78,6 +80,17 @@ jobs:
           source: ${{ inputs.extra_files }}
           target: ${{ inputs.server_path }}
           overwrite: true
+
+      - name: Write .env file
+        if: ${{ secrets.APP_ENV != '' }}
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ inputs.ssh_port }}
+          script: |
+            echo "${{ secrets.APP_ENV }}" | base64 -d > ${{ inputs.server_path }}/.env
 
       - name: Pull & restart services
         uses: appleboy/ssh-action@v1

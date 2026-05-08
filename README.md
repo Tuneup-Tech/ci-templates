@@ -134,3 +134,4 @@ jobs:
 | `portainer` | `infra-compose-deploy` | `/srv/portainer` |
 | `rabbitmq` | `infra-compose-deploy` | `/srv/rabbitmq` |
 | `redis` | `infra-compose-deploy` | `/srv/redis` |
+| `chat` | `infra-compose-deploy` | `/srv/chat` |
