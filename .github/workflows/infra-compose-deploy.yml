@@ -27,6 +27,11 @@ on:
         required: false
         type: number
         default: 22
+      has_env:
+        description: "Set to true if APP_ENV secret should be written as .env on the server"
+        required: false
+        type: boolean
+        default: false
     secrets:
       SSH_HOST:
         required: true
@@ -82,7 +87,7 @@ jobs:
           overwrite: true
 
       - name: Write .env file
-        if: ${{ secrets.APP_ENV != '' }}
+        if: ${{ inputs.has_env }}
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
