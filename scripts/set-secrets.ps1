@@ -54,7 +54,7 @@ Get-Content $ConfFile | ForEach-Object {
 }
 
 # --- Validate required values -----------------------------------------------
-foreach ($key in @("SSH_HOST", "SSH_PORT", "SSH_USERNAME", "SSH_KEY_FILE", "SSH_FINGERPRINT")) {
+foreach ($key in @("SSH_HOST", "SSH_PORT", "SSH_USERNAME", "SSH_KEY_FILE")) {
     if (-not $config[$key]) {
         Write-Host "ERROR: $key is not set in secrets.conf" -ForegroundColor Red
         exit 1
@@ -89,7 +89,6 @@ if ($LASTEXITCODE -ne 0) {
 # --- Collect secret values --------------------------------------------------
 $SSH_PRIVATE_KEY = Get-Content $SSH_KEY_FILE -Raw
 
-$SSH_FINGERPRINT = $config["SSH_FINGERPRINT"]
 
 Write-Host ""
 Write-Host "Pushing secrets to $($REPOS.Count) repos..." -ForegroundColor Cyan
@@ -108,7 +107,6 @@ foreach ($repo in $REPOS) {
         gh secret set SSH_PORT        --body $SSH_PORT            --repo $repo
         gh secret set SSH_USERNAME    --body $SSH_USERNAME        --repo $repo
         gh secret set SSH_PRIVATE_KEY --body $SSH_PRIVATE_KEY     --repo $repo
-        gh secret set SSH_FINGERPRINT --body $SSH_FINGERPRINT     --repo $repo
         Write-Host "   OK" -ForegroundColor Green
     } catch {
         Write-Host "   FAILED: $_" -ForegroundColor Red

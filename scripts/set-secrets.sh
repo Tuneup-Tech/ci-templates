@@ -31,7 +31,6 @@ source "$CONF_FILE"
 : "${SSH_PORT:?SSH_PORT is not set in secrets.conf}"
 : "${SSH_USERNAME:?SSH_USERNAME is not set in secrets.conf}"
 : "${SSH_KEY_FILE:?SSH_KEY_FILE is not set in secrets.conf}"
-: "${SSH_FINGERPRINT:?SSH_FINGERPRINT is not set in secrets.conf}"
 : "${REPOS:?REPOS array is not set in secrets.conf}"
 
 # --- Validate key file exists -----------------------------------------------
@@ -70,9 +69,7 @@ for repo in "${REPOS[@]}"; do
   if gh secret set SSH_HOST          --body "$SSH_HOST"          --repo "$repo" \
   && gh secret set SSH_PORT          --body "$SSH_PORT"          --repo "$repo" \
   && gh secret set SSH_USERNAME      --body "$SSH_USERNAME"      --repo "$repo" \
-  && gh secret set SSH_PRIVATE_KEY   --body "$SSH_PRIVATE_KEY"   --repo "$repo" \
-  && gh secret set SSH_FINGERPRINT   --body "$SSH_FINGERPRINT"   --repo "$repo" \
-  && gh secret delete SSH_KNOWN_HOSTS --repo "$repo" 2>/dev/null || true; then
+  && gh secret set SSH_PRIVATE_KEY   --body "$SSH_PRIVATE_KEY"   --repo "$repo"; then
     echo "  ✅ done"
   else
     echo "  ❌ failed"
