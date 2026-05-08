@@ -106,7 +106,7 @@ on:
 
 jobs:
   deploy:
-    uses: Tuneup-Tech/ci-templates/.github/workflows/docker-build-push-deploy.yml@main
+    uses: Tuneup-Tech/ci-templates/.github/workflows/docker-build-push-deploy.yml@master
     with:
       image_name: my-app
       compose_service: app
@@ -127,3 +127,10 @@ jobs:
 | `roundcircle` | `docker-build-push-deploy` | `/srv/roundcircle` |
 | `traefik` | `infra-compose-deploy` | `/srv/traefik` |
 | `uptime-kuma` | `infra-compose-deploy` | `/srv/uptime` |
+| `authentik` | `infra-compose-deploy` | `/srv/authentik` |
+| `firefly3` | `infra-compose-deploy` | `/srv/firefly3` |
+| `mysql` | `infra-compose-deploy` | `/srv/mysql` |
+| `phpmyadmin` | `infra-compose-deploy` | `/srv/phpmyadmin` |
+| `portainer` | `infra-compose-deploy` | `/srv/portainer` |
+| `rabbitmq` | `infra-compose-deploy` | `/srv/rabbitmq` |
+| `redis` | `infra-compose-deploy` | `/srv/redis` |

@@ -109,7 +109,6 @@ foreach ($repo in $REPOS) {
         gh secret set SSH_USERNAME    --body $SSH_USERNAME        --repo $repo
         gh secret set SSH_PRIVATE_KEY --body $SSH_PRIVATE_KEY     --repo $repo
         gh secret set SSH_FINGERPRINT --body $SSH_FINGERPRINT     --repo $repo
-        gh secret delete SSH_KNOWN_HOSTS --repo $repo 2>$null
         Write-Host "   OK" -ForegroundColor Green
     } catch {
         Write-Host "   FAILED: $_" -ForegroundColor Red
