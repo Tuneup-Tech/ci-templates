@@ -40,7 +40,7 @@ on:
 jobs:
   deploy:
     name: Deploy Infra to Server
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     environment: production
 
     steps:
