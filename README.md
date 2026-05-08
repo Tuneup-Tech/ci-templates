@@ -17,7 +17,7 @@ For any project that has a **Dockerfile** and deploys via Docker Compose.
 | `compose_file` | ❌ | `docker-compose.yml` | Compose file to copy to server |
 | `compose_service` | ✅ | — | Docker Compose service name |
 | `server_path` | ✅ | — | Absolute path on server, e.g. `/srv/true-cost-be` |
-| `ssh_port` | ❌ | `2222` | SSH port |
+| `ssh_port` | ❌ | `22` | SSH port |
 | `post_deploy_script` | ❌ | `""` | Shell commands to run after container starts |
 
 ---
@@ -34,7 +34,7 @@ For **static frontends** (React/Vite/etc.) — builds locally, uploads `dist/` t
 | `build_command` | ❌ | `yarn build` | Build command |
 | `dist_path` | ❌ | `dist` | Output directory |
 | `server_path` | ✅ | — | Absolute path on server |
-| `ssh_port` | ❌ | `2222` | SSH port |
+| `ssh_port` | ❌ | `22` | SSH port |
 | `post_deploy_script` | ❌ | `""` | Shell commands after upload |
 
 ---
@@ -50,7 +50,7 @@ For **infrastructure-only** repos (traefik, uptime-kuma, etc.) — no build step
 | `compose_file` | ❌ | `docker-compose.yml` | Compose file path |
 | `extra_files` | ❌ | `""` | Comma-separated extra files to copy |
 | `services` | ❌ | `""` | Space-separated services (empty = all) |
-| `ssh_port` | ❌ | `2222` | SSH port |
+| `ssh_port` | ❌ | `22` | SSH port |
 
 ---
 
@@ -59,7 +59,7 @@ For **infrastructure-only** repos (traefik, uptime-kuma, etc.) — no build step
 | Secret | Description |
 |---|---|
 | `SSH_HOST` | Server IP or hostname |
-| `SSH_PORT` | SSH port (default `2222`) |
+| `SSH_PORT` | SSH port (default `22`) |
 | `SSH_USERNAME` | SSH deploy user |
 | `SSH_PRIVATE_KEY` | SSH private key (PEM format) |
 | `SSH_FINGERPRINT` | SHA256 fingerprint of the server's host key — get with `ssh-keyscan <host> \| ssh-keygen -lf - -E sha256` (use the ED25519 value) |

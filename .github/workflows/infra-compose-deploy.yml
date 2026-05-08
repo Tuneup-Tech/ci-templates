@@ -26,7 +26,7 @@ on:
         description: "SSH port on the remote server"
         required: false
         type: number
-        default: 2222
+        default: 22
     secrets:
       SSH_HOST:
         required: true

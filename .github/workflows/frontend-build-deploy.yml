@@ -31,7 +31,7 @@ on:
         description: "SSH port on the remote server"
         required: false
         type: number
-        default: 2222
+        default: 22
       post_deploy_script:
         description: "Optional shell commands to run on the server after files are uploaded"
         required: false
