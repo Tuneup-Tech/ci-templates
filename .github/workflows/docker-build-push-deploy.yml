@@ -47,8 +47,6 @@ on:
         required: true
       SSH_PRIVATE_KEY:
         required: true
-      SSH_FINGERPRINT:
-        required: true
 
 jobs:
   build-and-push:
@@ -113,7 +111,6 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
           port: ${{ inputs.ssh_port }}
           script: |
             sudo mkdir -p ${{ inputs.server_path }}
@@ -125,7 +122,6 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
           port: ${{ inputs.ssh_port }}
           source: ${{ inputs.compose_file }}
           target: ${{ inputs.server_path }}
@@ -137,7 +133,6 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
           port: ${{ inputs.ssh_port }}
           script: |
             cd ${{ inputs.server_path }}
