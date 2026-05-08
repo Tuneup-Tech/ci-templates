@@ -1,0 +1,99 @@
+name: Reusable — Infra Compose Deploy
+
+on:
+  workflow_call:
+    inputs:
+      server_path:
+        description: "Absolute path on the server where the compose file lives"
+        required: true
+        type: string
+      compose_file:
+        description: "Path to the docker-compose file to copy (relative to repo root)"
+        required: false
+        type: string
+        default: "docker-compose.yml"
+      extra_files:
+        description: "Comma-separated list of additional files to copy (e.g. traefik.yml,config.yml)"
+        required: false
+        type: string
+        default: ""
+      services:
+        description: "Space-separated list of services to restart (leave empty to restart all)"
+        required: false
+        type: string
+        default: ""
+      ssh_port:
+        description: "SSH port on the remote server"
+        required: false
+        type: number
+        default: 2222
+    secrets:
+      SSH_HOST:
+        required: true
+      SSH_USERNAME:
+        required: true
+      SSH_PRIVATE_KEY:
+        required: true
+      SSH_FINGERPRINT:
+        required: true
+
+jobs:
+  deploy:
+    name: Deploy Infra to Server
+    runs-on: self-hosted
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure server directory exists
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+          port: ${{ inputs.ssh_port }}
+          script: |
+            sudo mkdir -p ${{ inputs.server_path }}
+            sudo chown -R ${{ secrets.SSH_USERNAME }}:${{ secrets.SSH_USERNAME }} ${{ inputs.server_path }}
+
+      - name: Copy compose file to server
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+          port: ${{ inputs.ssh_port }}
+          source: ${{ inputs.compose_file }}
+          target: ${{ inputs.server_path }}
+          overwrite: true
+
+      - name: Copy extra config files
+        if: ${{ inputs.extra_files != '' }}
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+          port: ${{ inputs.ssh_port }}
+          source: ${{ inputs.extra_files }}
+          target: ${{ inputs.server_path }}
+          overwrite: true
+
+      - name: Pull & restart services
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+          port: ${{ inputs.ssh_port }}
+          script: |
+            cd ${{ inputs.server_path }}
+            docker compose pull ${{ inputs.services }}
+            docker compose up -d --remove-orphans ${{ inputs.services }}
+            docker image prune -f

@@ -1,0 +1,148 @@
+name: Reusable — Docker Build, Push & Deploy
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: "GHCR image name (e.g. true-cost-be)"
+        required: true
+        type: string
+      dockerfile_path:
+        description: "Path to the Dockerfile relative to repo root"
+        required: false
+        type: string
+        default: "Dockerfile"
+      build_context:
+        description: "Docker build context relative to repo root"
+        required: false
+        type: string
+        default: "."
+      compose_file:
+        description: "Path to the docker-compose file to copy to the server"
+        required: false
+        type: string
+        default: "docker-compose.yml"
+      compose_service:
+        description: "The docker compose service name to redeploy"
+        required: true
+        type: string
+      server_path:
+        description: "Absolute path on the server where the app lives (e.g. /srv/true-cost-be)"
+        required: true
+        type: string
+      ssh_port:
+        description: "SSH port on the remote server"
+        required: false
+        type: number
+        default: 2222
+      post_deploy_script:
+        description: "Optional shell commands to run on the server after container is up"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      SSH_HOST:
+        required: true
+      SSH_USERNAME:
+        required: true
+      SSH_PRIVATE_KEY:
+        required: true
+      SSH_FINGERPRINT:
+        required: true
+
+jobs:
+  build-and-push:
+    name: Build & Push to GHCR
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.build_context }}
+          file: ${{ inputs.dockerfile_path }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to Server
+    needs: build-and-push
+    runs-on: self-hosted
+    environment: production
+
+    steps:
+      - name: Checkout (for compose file)
+        uses: actions/checkout@v4
+
+      - name: Ensure server directory exists
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+          port: ${{ inputs.ssh_port }}
+          script: |
+            sudo mkdir -p ${{ inputs.server_path }}
+            sudo chown -R ${{ secrets.SSH_USERNAME }}:${{ secrets.SSH_USERNAME }} ${{ inputs.server_path }}
+
+      - name: Copy compose file to server
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+          port: ${{ inputs.ssh_port }}
+          source: ${{ inputs.compose_file }}
+          target: ${{ inputs.server_path }}
+          overwrite: true
+
+      - name: Pull image & recreate container
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+          port: ${{ inputs.ssh_port }}
+          script: |
+            cd ${{ inputs.server_path }}
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker compose pull ${{ inputs.compose_service }}
+            docker compose up -d --force-recreate --remove-orphans ${{ inputs.compose_service }}
+            ${{ inputs.post_deploy_script }}
+            docker image prune -f

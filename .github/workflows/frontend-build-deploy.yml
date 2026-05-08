@@ -1,0 +1,130 @@
+name: Reusable — Frontend Build & Deploy
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        description: "Node.js version to use for the build"
+        required: false
+        type: string
+        default: "22"
+      package_manager:
+        description: "Package manager: npm or yarn"
+        required: false
+        type: string
+        default: "yarn"
+      build_command:
+        description: "Command to build the frontend"
+        required: false
+        type: string
+        default: "yarn build"
+      dist_path:
+        description: "Local path of the built output to upload (relative to repo root)"
+        required: false
+        type: string
+        default: "dist"
+      server_path:
+        description: "Absolute path on the server where the built files should live"
+        required: true
+        type: string
+      ssh_port:
+        description: "SSH port on the remote server"
+        required: false
+        type: number
+        default: 2222
+      post_deploy_script:
+        description: "Optional shell commands to run on the server after files are uploaded"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      SSH_HOST:
+        required: true
+      SSH_USERNAME:
+        required: true
+      SSH_PRIVATE_KEY:
+        required: true
+      SSH_FINGERPRINT:
+        required: true
+
+jobs:
+  build:
+    name: Build Frontend
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: ${{ inputs.package_manager }}
+
+      - name: Install dependencies
+        run: |
+          if [ "${{ inputs.package_manager }}" = "yarn" ]; then
+            yarn install --frozen-lockfile
+          else
+            npm ci
+          fi
+
+      - name: Build
+        run: ${{ inputs.build_command }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: ${{ inputs.dist_path }}
+          retention-days: 1
+
+  deploy:
+    name: Deploy to Server
+    needs: build
+    runs-on: self-hosted
+    environment: production
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist
+
+      - name: Ensure server directory exists
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+          port: ${{ inputs.ssh_port }}
+          script: |
+            sudo mkdir -p ${{ inputs.server_path }}
+            sudo chown -R ${{ secrets.SSH_USERNAME }}:${{ secrets.SSH_USERNAME }} ${{ inputs.server_path }}
+
+      - name: Upload dist to server
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+          port: ${{ inputs.ssh_port }}
+          source: "dist/*"
+          target: ${{ inputs.server_path }}
+          overwrite: true
+          strip_components: 1
+
+      - name: Post-deploy steps
+        if: ${{ inputs.post_deploy_script != '' }}
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+          port: ${{ inputs.ssh_port }}
+          script: ${{ inputs.post_deploy_script }}
