@@ -51,7 +51,7 @@ on:
 jobs:
   build-and-push:
     name: Build & Push to GHCR
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
@@ -98,7 +98,7 @@ jobs:
   deploy:
     name: Deploy to Server
     needs: build-and-push
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     environment: production
 
     steps:
