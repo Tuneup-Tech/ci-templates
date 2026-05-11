@@ -134,19 +134,7 @@ jobs:
           target: ${{ inputs.server_path }}
           overwrite: true
 
-      - name: Copy .env.production to server
-        if: inputs.has_env == true
-        uses: appleboy/scp-action@v1
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ inputs.ssh_port }}
-          source: .env.production
-          target: ${{ inputs.server_path }}
-          overwrite: true
-
-      - name: Decode .env.production on server
+      - name: Write .env file
         if: inputs.has_env == true
         uses: appleboy/ssh-action@v1
         with:
@@ -155,8 +143,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ inputs.ssh_port }}
           script: |
-            cd ${{ inputs.server_path }}
-            echo "${{ secrets.APP_ENV }}" | base64 -d > .env.production
+            echo "${{ secrets.APP_ENV }}" | base64 -d > ${{ inputs.server_path }}/.env
 
       - name: Pull image & recreate container
         uses: appleboy/ssh-action@v1
