@@ -77,7 +77,8 @@ copy scripts\secrets.conf.example scripts\secrets.conf
 # edit scripts\secrets.conf
 
 # 2. Run (requires GitHub CLI: https://cli.github.com)
-.\scripts\set-secrets.ps1
+.\scripts\set-secrets.ps1                    # Process all repos
+.\scripts\set-secrets.ps1 mysql redis        # Process only specific repos
 ```
 
 > If blocked by execution policy, run once: `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`
@@ -87,7 +88,8 @@ copy scripts\secrets.conf.example scripts\secrets.conf
 cp scripts/secrets.conf.example scripts/secrets.conf
 # edit scripts/secrets.conf
 chmod +x scripts/set-secrets.sh
-./scripts/set-secrets.sh
+./scripts/set-secrets.sh                    # Process all repos
+./scripts/set-secrets.sh mysql redis        # Process only specific repos
 ```
 
 `secrets.conf` is gitignored — it will never be committed.

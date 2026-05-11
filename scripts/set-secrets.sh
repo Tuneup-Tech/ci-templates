@@ -9,7 +9,8 @@
 #
 # Usage:
 #   chmod +x set-secrets.sh
-#   ./set-secrets.sh
+#   ./set-secrets.sh                    # Process all repos
+#   ./set-secrets.sh repo1 repo2         # Process only specific repos
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
@@ -56,11 +57,34 @@ fi
 SSH_PRIVATE_KEY=$(cat "$SSH_KEY_FILE")
 
 echo ""
-echo "🔐 Pushing secrets to ${#REPOS[@]} repos..."
+if [[ $# -gt 0 ]]; then
+  echo "🔐 Pushing secrets to selected repos..."
+else
+  echo "🔐 Pushing secrets to ${#REPOS[@]} repos..."
+fi
 echo "   Host  : $SSH_HOST:$SSH_PORT"
 echo "   User  : $SSH_USERNAME"
 echo "   Key   : $SSH_KEY_FILE"
 echo ""
+
+# --- Filter repos based on arguments ---------------------------------------
+if [[ $# -gt 0 ]]; then
+  FILTERED_REPOS=()
+  for target in "$@"; do
+    for repo in "${REPOS[@]}"; do
+      repo_name="${repo##*/}"
+      if [[ "$repo_name" == "$target" ]] || [[ "$repo" == "$target" ]]; then
+        FILTERED_REPOS+=("$repo")
+        break
+      fi
+    done
+  done
+  if [[ ${#FILTERED_REPOS[@]} -eq 0 ]]; then
+    echo "❌  No matching repos found"
+    exit 1
+  fi
+  REPOS=("${FILTERED_REPOS[@]}")
+fi
 
 # --- Push secrets -----------------------------------------------------------
 FAILED=()

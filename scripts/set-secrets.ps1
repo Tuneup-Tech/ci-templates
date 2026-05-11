@@ -7,11 +7,18 @@
 #   - secrets.conf filled in (copy secrets.conf.example to secrets.conf)
 #
 # Usage (from PowerShell):
-#   .\set-secrets.ps1
+#   .\set-secrets.ps1                    # Process all repos
+#   .\set-secrets.ps1 repo1 repo2         # Process only specific repos
 #
 # If blocked by execution policy, run once:
 #   Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 # ---------------------------------------------------------------------------
+
+# --- Parse parameters ---------------------------------------------------------
+param(
+    [Parameter(ValueFromRemainingArguments=$true)]
+    [string[]]$TargetRepos
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -91,11 +98,33 @@ if ($LASTEXITCODE -ne 0) {
 $SSH_PRIVATE_KEY = Get-Content $SSH_KEY_FILE -Raw
 
 Write-Host ""
-Write-Host "Pushing secrets to $($REPOS.Count) repos..." -ForegroundColor Cyan
+if ($TargetRepos.Count -gt 0) {
+    Write-Host "Pushing secrets to $($REPOS.Count) selected repos..." -ForegroundColor Cyan
+} else {
+    Write-Host "Pushing secrets to $($REPOS.Count) repos..." -ForegroundColor Cyan
+}
 Write-Host "   Host : ${SSH_HOST}:${SSH_PORT}"
 Write-Host "   User : $SSH_USERNAME"
 Write-Host "   Key  : $SSH_KEY_FILE"
 Write-Host ""
+
+# --- Filter repos based on parameters ---------------------------------------
+if ($TargetRepos.Count -gt 0) {
+    $filteredRepos = @()
+    foreach ($target in $TargetRepos) {
+        $match = $REPOS | Where-Object { $_ -like "*/$target" -or $_ -eq $target }
+        if ($match) {
+            $filteredRepos += $match
+        } else {
+            Write-Host "WARNING: Repo '$target' not found in REPOS list" -ForegroundColor Yellow
+        }
+    }
+    $REPOS = $filteredRepos
+    if ($REPOS.Count -eq 0) {
+        Write-Host "ERROR: No matching repos found" -ForegroundColor Red
+        exit 1
+    }
+}
 
 # --- Push secrets -----------------------------------------------------------
 $failed = @()
