@@ -124,5 +124,5 @@ jobs:
           script: |
             cd ${{ inputs.server_path }}
             docker compose pull ${{ inputs.services }}
-            docker compose up -d --remove-orphans ${{ inputs.services }}
+            docker compose up -d --remove-orphans --force-recreate ${{ inputs.services }}
             docker image prune -f
