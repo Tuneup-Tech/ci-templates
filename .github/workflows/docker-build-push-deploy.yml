@@ -91,6 +91,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Write .env.production for build
+        if: inputs.has_env == true
+        run: |
+          echo "${{ secrets.APP_ENV }}" | base64 -d > .env.production
+
+      - name: Parse build args from .env.production
+        id: build_args
+        if: inputs.has_env == true
+        run: |
+          ARGS=""
+          while IFS= read -r line || [ -n "$line" ]; do
+            # Skip comments and blank lines
+            [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+            ARGS="${ARGS}${line}"$'\n'
+          done < .env.production
+          # Write to multiline output
+          {
+            echo "args<<EOF"
+            echo "$ARGS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -101,6 +123,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: ${{ inputs.has_env == true && steps.build_args.outputs.args || '' }}
 
   deploy:
     name: Deploy to Server
