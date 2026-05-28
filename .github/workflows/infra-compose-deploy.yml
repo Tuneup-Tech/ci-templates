@@ -52,12 +52,10 @@ jobs:
     name: Deploy Infra to Server
     runs-on: ubuntu-latest
     environment: production
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.2
 
       - name: Ensure server directory exists
         uses: appleboy/ssh-action@v1
