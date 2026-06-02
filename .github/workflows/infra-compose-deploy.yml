@@ -37,6 +37,11 @@ on:
         required: false
         type: string
         default: ""
+      registry:
+        description: "Container registry to log into on the server. Defaults to ghcr.io; login auto-skips if no token is provided."
+        required: false
+        type: string
+        default: "ghcr.io"
     secrets:
       SSH_HOST:
         required: true
@@ -46,12 +51,19 @@ on:
         required: true
       APP_ENV:
         required: false
+      REGISTRY_USERNAME:
+        required: false
+      REGISTRY_TOKEN:
+        required: false
 
 jobs:
   deploy:
     name: Deploy Infra to Server
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      packages: read
 
     steps:
       - name: Checkout
@@ -112,6 +124,28 @@ jobs:
           port: ${{ inputs.ssh_port }}
           script: ${{ inputs.pre_deploy_script }}
 
+      - name: Registry login on server
+        if: ${{ inputs.registry != '' }}
+        uses: appleboy/ssh-action@v1
+        env:
+          # Fall back to the run's built-in GITHUB_TOKEN when no PAT is supplied.
+          REG_USER: ${{ secrets.REGISTRY_USERNAME || github.actor }}
+          REG_TOKEN: ${{ secrets.REGISTRY_TOKEN || github.token }}
+          REGISTRY: ${{ inputs.registry }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ inputs.ssh_port }}
+          envs: REG_USER,REG_TOKEN,REGISTRY
+          script: |
+            set -euo pipefail
+            if [ -z "${REG_TOKEN:-}" ] || [ -z "${REG_USER:-}" ]; then
+              echo "No registry credentials provided — skipping login (anonymous pull)."
+              exit 0
+            fi
+            echo "$REG_TOKEN" | docker login "$REGISTRY" -u "$REG_USER" --password-stdin
+
       - name: Pull & restart services
         uses: appleboy/ssh-action@v1
         with:
@@ -120,7 +154,8 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ inputs.ssh_port }}
           script: |
+            set -euo pipefail
             cd ${{ inputs.server_path }}
             docker compose pull ${{ inputs.services }}
-            docker compose up -d --remove-orphans --force-recreate ${{ inputs.services }}
+            docker compose up -d --remove-orphans ${{ inputs.services }}
             docker image prune -f
