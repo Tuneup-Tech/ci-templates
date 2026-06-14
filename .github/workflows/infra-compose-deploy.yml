@@ -37,6 +37,11 @@ on:
         required: false
         type: string
         default: ""
+      post_deploy_script:
+        description: "Optional shell commands to run on the server after docker compose pull & up"
+        required: false
+        type: string
+        default: ""
       registry:
         description: "Container registry to log into on the server. Defaults to ghcr.io; login auto-skips if no token is provided."
         required: false
@@ -159,3 +164,13 @@ jobs:
             docker compose pull ${{ inputs.services }}
             docker compose up -d --remove-orphans ${{ inputs.services }}
             docker image prune -f
+
+      - name: Run post-deploy script
+        if: ${{ inputs.post_deploy_script != '' }}
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ inputs.ssh_port }}
+          script: ${{ inputs.post_deploy_script }}
