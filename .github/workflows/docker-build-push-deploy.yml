@@ -128,9 +128,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: ${{ inputs.has_env == true && steps.build_args.outputs.args || '' }}
+          no-cache: true
+#          cache-from: type=gha
+#          cache-to: type=gha,mode=max
+#          build-args: ${{ inputs.has_env == true && steps.build_args.outputs.args || '' }}
 
   deploy:
     name: Deploy to Server
