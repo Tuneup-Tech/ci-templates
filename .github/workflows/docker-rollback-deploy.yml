@@ -1,0 +1,59 @@
+name: Reusable — Rollback to Existing Image
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: "Existing GHCR tag to roll back to (e.g. sha-abc1234)"
+        required: true
+        type: string
+      compose_service:
+        description: "The docker compose service name to redeploy"
+        required: true
+        type: string
+      server_path:
+        description: "Absolute path on the server where the app lives (e.g. /srv/true-cost-be)"
+        required: true
+        type: string
+      ssh_port:
+        description: "SSH port on the remote server"
+        required: false
+        type: number
+        default: 22
+      post_deploy_script:
+        description: "Optional shell commands to run on the server after container is up"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      SSH_HOST:
+        required: true
+      SSH_USERNAME:
+        required: true
+      SSH_PRIVATE_KEY:
+        required: true
+
+jobs:
+  rollback:
+    name: Roll back to ${{ inputs.image_tag }}
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Pull existing image tag & recreate container
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ inputs.ssh_port }}
+          script: |
+            cd ${{ inputs.server_path }}
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            IMAGE_TAG=${{ inputs.image_tag }} docker compose pull ${{ inputs.compose_service }}
+            IMAGE_TAG=${{ inputs.image_tag }} docker compose up -d --force-recreate --remove-orphans ${{ inputs.compose_service }}
+            ${{ inputs.post_deploy_script }}
+            docker image prune -f
