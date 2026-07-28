@@ -185,6 +185,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ inputs.ssh_port }}
           script: |
+            set -e
             cd ${{ inputs.server_path }}
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker compose pull ${{ inputs.compose_service }}
