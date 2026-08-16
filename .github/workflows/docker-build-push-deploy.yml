@@ -309,8 +309,12 @@ jobs:
 
               # fold the replacement into the accounted-for set so the next
               # iteration's "which id is new" check doesn't re-flag it.
-              CONTAINERS="$CONTAINERS
-              $NEW_ID"
+              # printf, not a literal line break -- this script body is a
+              # YAML block scalar, and a literal newline here bakes in this
+              # line's own source indentation as part of the value. grep -x
+              # then stops exact-matching that id against itself next lap,
+              # miscounts it as "new" too, and aborts a healthy rollout.
+              CONTAINERS=$(printf '%s\n%s' "$CONTAINERS" "$NEW_ID")
             done
 
             echo "all $TOTAL replica(s) of $SERVICE refreshed"
