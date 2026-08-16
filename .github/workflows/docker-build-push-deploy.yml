@@ -50,6 +50,11 @@ on:
         required: false
         type: boolean
         default: false
+      rolling_deploy:
+        description: "Recreate replicas one at a time, waiting for each to report Docker-healthy before touching the next, instead of the default batch --force-recreate (all replicas down+up together). Requires compose_service to define a healthcheck -- the rollout aborts loudly if it can't verify health. Only helps a service running deploy.replicas > 1 -- on a single-replica service it adds a mandatory health-wait with no sibling to keep serving, so deploys get slower with no uptime benefit. Off by default -- opt in per repo."
+        required: false
+        type: boolean
+        default: false
     secrets:
       SSH_HOST:
         required: true
@@ -177,7 +182,9 @@ jobs:
           script: |
             echo "${{ secrets.APP_ENV }}" | base64 -d > ${{ inputs.server_path }}/.env
 
-      - name: Pull image & recreate container
+      # shared by both recreate paths below -- was duplicated per-step before,
+      # drifted easily since a change to login/pull only needed in one place.
+      - name: Login to GHCR & pull image
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -189,6 +196,138 @@ jobs:
             cd ${{ inputs.server_path }}
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker compose pull ${{ inputs.compose_service }}
+
+      - name: Recreate container (batch)
+        if: inputs.rolling_deploy != true
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ inputs.ssh_port }}
+          script: |
+            set -e
+            cd ${{ inputs.server_path }}
             docker compose up -d --force-recreate --remove-orphans ${{ inputs.compose_service }}
+
+      - name: Recreate replicas one at a time
+        if: inputs.rolling_deploy == true
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ inputs.ssh_port }}
+          # 600s/replica health budget alone hits 30m at 3 replicas, leaving
+          # no room for login/pull/stop/rm/up overhead per iteration -- this
+          # action's OWN timeout must never be what kills a rollout mid-way,
+          # so give it real headroom past the worst-case health-wait sum.
+          command_timeout: 60m
+          script: |
+            set -e
+            cd ${{ inputs.server_path }}
+
+            SERVICE="${{ inputs.compose_service }}"
+            HEALTH_TIMEOUT_S=600
+            POLL_INTERVAL_S=5
+
+            # snapshot BEFORE touching anything -- fixed list. iterating a
+            # live-requeried list risks reprocessing a replacement as if it
+            # were original, or skipping one from timing drift.
+            CONTAINERS=$(docker compose ps -q "$SERVICE")
+            TOTAL=$(echo "$CONTAINERS" | grep -c . || true)
+            if [ "$TOTAL" -eq 0 ]; then
+              echo "no running $SERVICE containers found -- nothing to roll, falling back to plain up -d" >&2
+              docker compose up -d --remove-orphans "$SERVICE"
+              exit 0
+            fi
+            echo "rolling-recreating $TOTAL replica(s) of $SERVICE, one at a time"
+
+            for OLD_ID in $CONTAINERS; do
+              OLD_NAME=$(docker inspect --format='{{.Name}}' "$OLD_ID" | sed 's#^/##')
+              echo "-- recreating $OLD_NAME ($OLD_ID) --"
+
+              docker stop "$OLD_ID"
+              # -f: stop already completed above, this only guards the rare
+              # race where the container hasn't fully released yet -- a bare
+              # rm there would fail under set -e and abort the whole rollout
+              # with no diagnostic.
+              docker rm -f "$OLD_ID"
+
+              # scale target unchanged -- compose sees one short vs TOTAL,
+              # creates exactly one replacement on the freshly-pulled image.
+              # --no-recreate leaves the still-running sibling(s) alone.
+              docker compose up -d --scale "$SERVICE=$TOTAL" --no-recreate "$SERVICE"
+
+              # docker compose ps -q separates ids with NEWLINES, not spaces.
+              # a plain `case " $CONTAINERS " in *" $ID "*)` membership test
+              # breaks on that (newline where the pattern expects a space) --
+              # every original id would spuriously fail the "already known"
+              # check. grep -x line-matches instead, which is newline-safe.
+              NEW_ID=""
+              NEW_COUNT=0
+              for ID in $(docker compose ps -q "$SERVICE"); do
+                if ! printf '%s\n' "$CONTAINERS" | grep -qxF "$ID"; then
+                  NEW_ID="$ID"
+                  NEW_COUNT=$((NEW_COUNT + 1))
+                fi
+              done
+              if [ "$NEW_COUNT" -ne 1 ]; then
+                echo "expected exactly 1 new replica after recreating $OLD_NAME, found $NEW_COUNT -- aborting rollout. migrations have NOT run; fleet is in a mixed state, needs manual review before retrying" >&2
+                exit 1
+              fi
+
+              echo "waiting for $NEW_ID to report Docker-healthy (timeout ${HEALTH_TIMEOUT_S}s)"
+              ELAPSED=0
+              while true; do
+                # container could vanish mid-poll (OOM, crash-loop) -- don't
+                # let a bare inspect failure hit set -e and abort silently
+                # with no diagnostic; report it as the failure it is.
+                if ! STATUS=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$NEW_ID" 2>/dev/null); then
+                  echo "$NEW_ID vanished while waiting for health (crashed or was removed) -- aborting rollout, $((TOTAL - 1)) replica(s) may still be on the old image. migrations have NOT run" >&2
+                  exit 1
+                fi
+                if [ "$STATUS" = "healthy" ]; then
+                  echo "$NEW_ID is healthy"
+                  break
+                fi
+                if [ "$STATUS" = "unhealthy" ]; then
+                  echo "$NEW_ID reported unhealthy -- aborting rollout, $((TOTAL - 1)) replica(s) may still be on the old image. migrations have NOT run" >&2
+                  exit 1
+                fi
+                if [ "$STATUS" = "none" ]; then
+                  echo "$SERVICE has no healthcheck configured -- rolling_deploy can't verify rollout safety without one, aborting" >&2
+                  exit 1
+                fi
+                if [ "$ELAPSED" -ge "$HEALTH_TIMEOUT_S" ]; then
+                  echo "timed out waiting for $NEW_ID to become healthy -- aborting rollout, $((TOTAL - 1)) replica(s) may still be on the old image. migrations have NOT run" >&2
+                  exit 1
+                fi
+                sleep "$POLL_INTERVAL_S"
+                ELAPSED=$((ELAPSED + POLL_INTERVAL_S))
+              done
+
+              # fold the replacement into the accounted-for set so the next
+              # iteration's "which id is new" check doesn't re-flag it.
+              CONTAINERS="$CONTAINERS
+              $NEW_ID"
+            done
+
+            echo "all $TOTAL replica(s) of $SERVICE refreshed"
+
+      # shared by both recreate paths -- only reached if the chosen path
+      # above succeeded (a skipped step doesn't block this; a failed one
+      # does), so migrations never run against a fleet the recreate step
+      # itself gave up on.
+      - name: Run post-deploy steps
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ inputs.ssh_port }}
+          script: |
+            set -e
+            cd ${{ inputs.server_path }}
             ${{ inputs.post_deploy_script }}
             docker image prune -f
