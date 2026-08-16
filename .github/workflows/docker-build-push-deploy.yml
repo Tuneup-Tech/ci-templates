@@ -50,6 +50,11 @@ on:
         required: false
         type: boolean
         default: false
+      rolling_deploy:
+        description: "Recreate replicas one at a time, waiting for each to report Docker-healthy before touching the next, instead of the default batch --force-recreate (all replicas down+up together). Requires compose_service to define a healthcheck -- the rollout aborts loudly if it can't verify health. Off by default -- opt in per repo."
+        required: false
+        type: boolean
+        default: false
     secrets:
       SSH_HOST:
         required: true
@@ -177,7 +182,8 @@ jobs:
           script: |
             echo "${{ secrets.APP_ENV }}" | base64 -d > ${{ inputs.server_path }}/.env
 
-      - name: Pull image & recreate container
+      - name: Pull image & recreate container (batch)
+        if: inputs.rolling_deploy != true
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -190,5 +196,101 @@ jobs:
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker compose pull ${{ inputs.compose_service }}
             docker compose up -d --force-recreate --remove-orphans ${{ inputs.compose_service }}
+            ${{ inputs.post_deploy_script }}
+            docker image prune -f
+
+      - name: Pull image & recreate replicas one at a time
+        if: inputs.rolling_deploy == true
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ inputs.ssh_port }}
+          # default 10m is tight for N replicas x up-to-10min health wait each --
+          # this is the CI action's OWN timeout, separate from the script's
+          # per-replica wait below. must not be the thing that kills a rollout
+          # mid-way.
+          command_timeout: 30m
+          script: |
+            set -e
+            cd ${{ inputs.server_path }}
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker compose pull ${{ inputs.compose_service }}
+
+            SERVICE="${{ inputs.compose_service }}"
+            HEALTH_TIMEOUT_S=600
+            POLL_INTERVAL_S=5
+
+            # snapshot BEFORE touching anything -- fixed list. iterating a
+            # live-requeried list risks reprocessing a replacement as if it
+            # were original, or skipping one from timing drift.
+            CONTAINERS=$(docker compose ps -q "$SERVICE")
+            TOTAL=$(echo "$CONTAINERS" | grep -c . || true)
+            if [ "$TOTAL" -eq 0 ]; then
+              echo "no running $SERVICE containers found -- nothing to roll, falling back to plain up -d" >&2
+              docker compose up -d --remove-orphans "$SERVICE"
+              ${{ inputs.post_deploy_script }}
+              docker image prune -f
+              exit 0
+            fi
+            echo "rolling-recreating $TOTAL replica(s) of $SERVICE, one at a time"
+
+            for OLD_ID in $CONTAINERS; do
+              OLD_NAME=$(docker inspect --format='{{.Name}}' "$OLD_ID" | sed 's#^/##')
+              echo "-- recreating $OLD_NAME ($OLD_ID) --"
+
+              docker stop "$OLD_ID"
+              docker rm "$OLD_ID"
+
+              # scale target unchanged -- compose sees one short vs TOTAL,
+              # creates exactly one replacement on the freshly-pulled image.
+              # --no-recreate leaves the still-running sibling(s) alone.
+              docker compose up -d --scale "$SERVICE=$TOTAL" --no-recreate "$SERVICE"
+
+              # the new container is whichever current id isn't in our
+              # running "already accounted for" set.
+              NEW_ID=""
+              for ID in $(docker compose ps -q "$SERVICE"); do
+                case " $CONTAINERS " in
+                  *" $ID "*) ;;
+                  *) NEW_ID="$ID" ;;
+                esac
+              done
+              if [ -z "$NEW_ID" ]; then
+                echo "could not identify the replacement for $OLD_NAME -- aborting rollout" >&2
+                exit 1
+              fi
+
+              echo "waiting for $NEW_ID to report Docker-healthy (timeout ${HEALTH_TIMEOUT_S}s)"
+              ELAPSED=0
+              while true; do
+                STATUS=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$NEW_ID")
+                if [ "$STATUS" = "healthy" ]; then
+                  echo "$NEW_ID is healthy"
+                  break
+                fi
+                if [ "$STATUS" = "unhealthy" ]; then
+                  echo "$NEW_ID reported unhealthy -- aborting rollout, $((TOTAL - 1)) replica(s) may still be on the old image" >&2
+                  exit 1
+                fi
+                if [ "$STATUS" = "none" ]; then
+                  echo "$SERVICE has no healthcheck configured -- rolling_deploy can't verify rollout safety without one, aborting" >&2
+                  exit 1
+                fi
+                if [ "$ELAPSED" -ge "$HEALTH_TIMEOUT_S" ]; then
+                  echo "timed out waiting for $NEW_ID to become healthy -- aborting rollout, $((TOTAL - 1)) replica(s) may still be on the old image" >&2
+                  exit 1
+                fi
+                sleep "$POLL_INTERVAL_S"
+                ELAPSED=$((ELAPSED + POLL_INTERVAL_S))
+              done
+
+              # fold the replacement into the accounted-for set so the next
+              # iteration's "which id is new" check doesn't re-flag it.
+              CONTAINERS="$CONTAINERS $NEW_ID"
+            done
+
+            echo "all $TOTAL replica(s) of $SERVICE refreshed"
             ${{ inputs.post_deploy_script }}
             docker image prune -f
