@@ -55,6 +55,8 @@ For **infrastructure-only** repos (traefik, uptime-kuma, etc.) — no build step
 | `env_sample` | ❌ | `""` | Repo path listing required `APP_ENV` keys (e.g. `.env-sample`). Checked on the runner before anything touches the server; a missing, blank or `<placeholder>` key stops the deploy. Lines ending `# optional` are skipped. |
 
 > `APP_ENV` replaces the **whole** `.env` on every deploy. Rebuild it from the full sample, never from a single key.
+>
+> With `has_env: true`, every deploy first checks on the runner that `APP_ENV` is set, is valid base64, and decodes to a non-empty file. With `env_sample` it also checks every required key. Any failure stops the deploy before the server is touched. `env_sample` without `has_env` fails, because no `.env` would be written. The `.env` on the server is written owner-only (`600`).
 
 ---
 
