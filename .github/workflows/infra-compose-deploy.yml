@@ -32,6 +32,11 @@ on:
         required: false
         type: boolean
         default: false
+      env_sample:
+        description: "Optional repo path (e.g. .env-sample) listing required APP_ENV keys. Checked on the runner BEFORE anything touches the server; a missing, blank or <placeholder> key stops the deploy. Lines ending '# optional' are not required."
+        required: false
+        type: string
+        default: ""
       pre_deploy_script:
         description: "Optional shell commands to run on the server before docker compose pull & up"
         required: false
@@ -73,6 +78,49 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
+
+      # runs on the runner, before any scp/ssh step: a bad APP_ENV stops the
+      # deploy with the server untouched (no files copied, .env not rewritten).
+      # 2026-10-07 monitoring: token-only APP_ENV dropped AUTHENTIK_* -> grafana
+      # login loop, only noticed when sessions expired.
+      - name: Validate APP_ENV against env sample
+        if: ${{ inputs.has_env && inputs.env_sample != '' }}
+        env:
+          APP_ENV: ${{ secrets.APP_ENV }}
+          ENV_SAMPLE: ${{ inputs.env_sample }}
+        run: |
+          set -eu
+          if [ ! -f "$ENV_SAMPLE" ]; then
+            echo "::error::env_sample '$ENV_SAMPLE' not found in repo"; exit 1
+          fi
+          if [ -z "$APP_ENV" ]; then
+            echo "::error::APP_ENV secret is empty"; exit 1
+          fi
+          umask 077
+          decoded="$RUNNER_TEMP/app.env"
+          trap 'rm -f "$decoded"' EXIT
+          if ! printf '%s' "$APP_ENV" | base64 -d > "$decoded" 2>/dev/null; then
+            echo "::error::APP_ENV is not valid base64"; exit 1
+          fi
+          keys=$(tr -d '\r' < "$ENV_SAMPLE" | grep -E '^[A-Za-z_][A-Za-z0-9_]*=' \
+            | grep -v -E '#[[:space:]]*optional[[:space:]]*$' | cut -d= -f1 || true)
+          if [ -z "$keys" ]; then
+            echo "::error::no required keys in $ENV_SAMPLE"; exit 1
+          fi
+          missing=""
+          for key in $keys; do
+            value=$(tr -d '\r' < "$decoded" | grep -E "^${key}=" | tail -n 1 | cut -d= -f2- \
+              | sed -e 's/^["'\'']//' -e 's/["'\'']$//' || true)
+            trimmed=$(printf '%s' "$value" | tr -d '[:space:]')
+            case "$trimmed" in
+              ''|'<'*'>') missing="$missing $key" ;;
+            esac
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::APP_ENV missing, blank or placeholder:$missing -- deploy stopped, server untouched"
+            exit 1
+          fi
+          echo "APP_ENV has every required key in $ENV_SAMPLE"
 
       - name: Ensure server directory exists
         uses: appleboy/ssh-action@v1

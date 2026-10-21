@@ -51,6 +51,10 @@ For **infrastructure-only** repos (traefik, uptime-kuma, etc.) — no build step
 | `extra_files` | ❌ | `""` | Comma-separated extra files to copy |
 | `services` | ❌ | `""` | Space-separated services (empty = all) |
 | `ssh_port` | ❌ | `22` | SSH port |
+| `has_env` | ❌ | `false` | Write the `APP_ENV` secret (base64) as `.env` on the server |
+| `env_sample` | ❌ | `""` | Repo path listing required `APP_ENV` keys (e.g. `.env-sample`). Checked on the runner before anything touches the server; a missing, blank or `<placeholder>` key stops the deploy. Lines ending `# optional` are skipped. |
+
+> `APP_ENV` replaces the **whole** `.env` on every deploy. Rebuild it from the full sample, never from a single key.
 
 ---
 
