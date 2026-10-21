@@ -32,6 +32,11 @@ on:
         required: false
         type: boolean
         default: false
+      env_sample:
+        description: "Optional repo path (e.g. .env-sample) listing required APP_ENV keys. Checked on the runner BEFORE anything touches the server; a missing, blank or <placeholder> key stops the deploy. Lines ending '# optional' are not required."
+        required: false
+        type: string
+        default: ""
       pre_deploy_script:
         description: "Optional shell commands to run on the server before docker compose pull & up"
         required: false
@@ -73,6 +78,74 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
+
+      # runner side, before any scp/ssh. bad APP_ENV -> stop, server untouched
+      # (no files copied, .env not rewritten).
+      # why: 2026-10-07 monitoring token-only APP_ENV dropped AUTHENTIK_* ->
+      # grafana login loop, unseen till sessions expired.
+      # empty/non-base64 check = every has_env caller. key check = env_sample.
+      - name: Validate APP_ENV
+        if: ${{ inputs.has_env || inputs.env_sample != '' }}
+        env:
+          APP_ENV: ${{ secrets.APP_ENV }}
+          HAS_ENV: ${{ inputs.has_env }}
+          ENV_SAMPLE: ${{ inputs.env_sample }}
+        run: |
+          set -eu
+          # env_sample w/o has_env = no .env written at all. misconfig, fail loud.
+          if [ "$HAS_ENV" != "true" ]; then
+            echo "::error::env_sample is set but has_env is false -- no .env would be written"; exit 1
+          fi
+          if [ -z "$APP_ENV" ]; then
+            echo "::error::APP_ENV secret is empty"; exit 1
+          fi
+          umask 077
+          decoded="$RUNNER_TEMP/app.env"
+          trap 'rm -f "$decoded"' EXIT
+          if ! printf '%s' "$APP_ENV" | base64 -d > "$decoded" 2>/dev/null; then
+            echo "::error::APP_ENV is not valid base64"; exit 1
+          fi
+          if ! grep -q '[^[:space:]]' "$decoded"; then
+            echo "::error::APP_ENV decodes to an empty .env"; exit 1
+          fi
+          if [ -z "$ENV_SAMPLE" ]; then
+            echo "APP_ENV decodes (no env_sample -- required keys not checked)"; exit 0
+          fi
+          if [ ! -f "$ENV_SAMPLE" ]; then
+            echo "::error::env_sample '$ENV_SAMPLE' not found in repo"; exit 1
+          fi
+          keys=$(tr -d '\r' < "$ENV_SAMPLE" | grep -E '^[A-Za-z_][A-Za-z0-9_]*=' \
+            | grep -v -E '#[[:space:]]*optional[[:space:]]*$' | cut -d= -f1 || true)
+          if [ -z "$keys" ]; then
+            echo "::error::no required keys in $ENV_SAMPLE"; exit 1
+          fi
+          missing=""
+          exported=""
+          for key in $keys; do
+            value=$(tr -d '\r' < "$decoded" | grep -E "^${key}=" | tail -n 1 | cut -d= -f2- \
+              | sed -e 's/^["'\'']//' -e 's/["'\'']$//' || true)
+            trimmed=$(printf '%s' "$value" | tr -d '[:space:]')
+            case "$trimmed" in
+              ''|'<'*'>')
+                # "export KEY=" -> compose env_file no read it. say so, not "missing".
+                if tr -d '\r' < "$decoded" | grep -q -E "^export[[:space:]]+${key}="; then
+                  exported="$exported $key"
+                else
+                  missing="$missing $key"
+                fi
+                ;;
+            esac
+          done
+          if [ -n "$exported" ]; then
+            echo "::error::APP_ENV uses 'export KEY=' (not supported, drop 'export'):$exported"
+          fi
+          if [ -n "$missing" ]; then
+            echo "::error::APP_ENV missing, blank or placeholder:$missing -- deploy stopped, server untouched"
+          fi
+          if [ -n "$exported$missing" ]; then
+            exit 1
+          fi
+          echo "APP_ENV has every required key in $ENV_SAMPLE"
 
       - name: Ensure server directory exists
         uses: appleboy/ssh-action@v1
@@ -117,7 +190,10 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ inputs.ssh_port }}
           script: |
+            # secrets inside. owner only. umask = new file, chmod = existing one.
+            umask 077
             echo "${{ secrets.APP_ENV }}" | base64 -d > ${{ inputs.server_path }}/.env
+            chmod 600 ${{ inputs.server_path }}/.env
 
       - name: Run pre-deploy script
         if: ${{ inputs.pre_deploy_script != '' }}
