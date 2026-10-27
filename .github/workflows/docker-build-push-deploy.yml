@@ -374,7 +374,8 @@ jobs:
 
             snapshot() {
               for ID in $(docker compose ps -aq "$SERVICE"); do
-                docker inspect --format='{{.Name}} {{.State.Status}} {{.RestartCount}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$ID"
+                # container gone between ps and inspect = report it, not die silently under set -e
+                docker inspect --format='{{.Name}} {{.State.Status}} {{.RestartCount}} {{.State.StartedAt}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$ID" 2>/dev/null                   || echo "$ID vanished 0 - none"
               done
             }
             BEFORE=$(snapshot)
@@ -387,11 +388,14 @@ jobs:
             echo "$AFTER"
 
             BAD=""
-            while read -r NAME STATUS RESTARTS HEALTH; do
+            while read -r NAME STATUS RESTARTS STARTED HEALTH; do
               [ -n "$NAME" ] || continue
               WAS=$(echo "$BEFORE" | awk -v n="$NAME" '$1==n {print $3}')
+              # StartedAt too: autoheal `docker restart` no bump RestartCount
+              WAS_STARTED=$(echo "$BEFORE" | awk -v n="$NAME" '$1==n {print $4}')
               if [ "$STATUS" != "running" ]; then BAD="$BAD $NAME:$STATUS"
               elif [ -n "$WAS" ] && [ "$RESTARTS" != "$WAS" ]; then BAD="$BAD $NAME:restarted($WAS->$RESTARTS)"
+              elif [ -n "$WAS_STARTED" ] && [ "$STARTED" != "$WAS_STARTED" ]; then BAD="$BAD $NAME:restarted"
               elif [ "$HEALTH" = "unhealthy" ]; then BAD="$BAD $NAME:unhealthy"
               fi
             done <<EOF
