@@ -74,6 +74,11 @@ on:
         required: true
       APP_ENV:
         required: false
+      # org secrets, via `secrets: inherit`. unset = no deploy message, deploy unaffected.
+      TELEGRAM_BOT_TOKEN:
+        required: false
+      TELEGRAM_CHAT_ID:
+        required: false
 
 jobs:
   build-and-push:
@@ -411,3 +416,25 @@ jobs:
               exit 1
             fi
             echo "$SERVICE stayed up for ${WAIT_S}s"
+
+  # always runs: success, failure or cancel -> one telegram line w/ what shipped
+  notify:
+    name: Notify Telegram
+    needs: [build-and-push, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    steps:
+      - name: Send deploy message
+        uses: Tuneup-Tech/ci-templates/.github/actions/deploy-notify@master
+        with:
+          app: ${{ inputs.image_name }}
+          # build not ok -> its result (deploy never ran). else deploy's own (skipped stays skipped).
+          result: ${{ needs.build-and-push.result != 'success' && needs.build-and-push.result || needs.deploy.result }}
+          ref: ${{ inputs.ref }}
+          liveness_seconds: ${{ inputs.liveness_seconds }}
+          telegram_bot_token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          telegram_chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
