@@ -19,6 +19,11 @@ For any project that has a **Dockerfile** and deploys via Docker Compose.
 | `server_path` | ✅ | — | Absolute path on server, e.g. `/srv/true-cost-be` |
 | `ssh_port` | ❌ | `22` | SSH port |
 | `post_deploy_script` | ❌ | `""` | Shell commands to run after container starts |
+| `has_env` | ❌ | `false` | Write the `APP_ENV` secret (base64) as `.env` on the server and `.env.production` for the build |
+| `env_sample` | ❌ | `""` | Repo path listing required `APP_ENV` keys (e.g. `.env.example`). Checked on the runner before the build; a missing, blank or `<placeholder>` key stops the deploy. Lines ending `# optional` are skipped. |
+| `liveness_seconds` | ❌ | `60` | After post-deploy, watch the service this long; fail the run if any container stopped, restarted or went unhealthy (prints its last 40 log lines). `0` skips. |
+
+> `docker compose up -d` returns as soon as a container *starts*. On 2026-10-27 true-cost crash-looped for 7.5h on a missing env var while the run showed green — `liveness_seconds` and `env_sample` close that gap.
 
 ---
 
