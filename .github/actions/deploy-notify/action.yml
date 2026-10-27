@@ -1,0 +1,48 @@
+name: Deploy notify
+description: >-
+  One Telegram message per deploy -- status, PRs shipped since the last
+  successful deploy, failed step + error line, run link. Never fails the run.
+inputs:
+  app:
+    description: name shown in the message (image_name)
+    required: true
+  result:
+    description: success | failure | cancelled
+    required: true
+  ref:
+    description: git ref that was deployed (defaults to the run's sha)
+    required: false
+    default: ""
+  liveness_seconds:
+    description: shown on success when > 0
+    required: false
+    default: "0"
+  telegram_bot_token:
+    required: false
+    default: ""
+  telegram_chat_id:
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        RUN_ID: ${{ github.run_id }}
+        RUN_ATTEMPT: ${{ github.run_attempt }}
+        REF_NAME: ${{ github.ref_name }}
+        DEPLOY_REF: ${{ inputs.ref }}
+        APP: ${{ inputs.app }}
+        DEPLOY: ${{ inputs.result }}
+        LIVENESS: ${{ inputs.liveness_seconds }}
+        TG_TOKEN: ${{ inputs.telegram_bot_token }}
+        TG_CHAT: ${{ inputs.telegram_chat_id }}
+      run: |
+        # pinned ref/tag rollback -> resolve to the commit actually deployed
+        SHA="${{ github.sha }}"
+        if [ -n "$DEPLOY_REF" ]; then
+          SHA=$(gh api "repos/$REPO/commits/$DEPLOY_REF" --jq .sha 2>/dev/null || echo "$SHA")
+        fi
+        SHA="$SHA" bash "${{ github.action_path }}/notify.sh"
