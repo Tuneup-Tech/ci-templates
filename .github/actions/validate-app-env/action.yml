@@ -1,0 +1,85 @@
+name: Validate APP_ENV
+description: >-
+  Runner-side check before anything touches the server. APP_ENV must be set,
+  valid base64 and non-empty; with env_sample, every required key must be
+  present, non-blank and not a <placeholder>. Lines ending '# optional' are
+  not required.
+inputs:
+  app_env:
+    description: base64 .env (the APP_ENV secret)
+    required: false
+    default: ""
+  has_env:
+    description: whether the caller writes APP_ENV as .env
+    required: true
+  env_sample:
+    description: repo path listing required keys, e.g. .env-sample
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    # why: 2026-10-07 monitoring token-only APP_ENV dropped AUTHENTIK_* ->
+    # grafana login loop. 2026-10-27 true-cost APP_ENV lacked
+    # PAYMENT_CREDENTIALS_ENCRYPTION_KEY -> prod crash-looped 7.5h.
+    - shell: bash
+      env:
+        APP_ENV: ${{ inputs.app_env }}
+        HAS_ENV: ${{ inputs.has_env }}
+        ENV_SAMPLE: ${{ inputs.env_sample }}
+      run: |
+        set -eu
+        # env_sample w/o has_env = no .env written at all. misconfig, fail loud.
+        if [ "$HAS_ENV" != "true" ]; then
+          echo "::error::env_sample is set but has_env is false -- no .env would be written"; exit 1
+        fi
+        if [ -z "$APP_ENV" ]; then
+          echo "::error::APP_ENV secret is empty"; exit 1
+        fi
+        umask 077
+        decoded="$RUNNER_TEMP/app.env"
+        trap 'rm -f "$decoded"' EXIT
+        if ! printf '%s' "$APP_ENV" | base64 -d > "$decoded" 2>/dev/null; then
+          echo "::error::APP_ENV is not valid base64"; exit 1
+        fi
+        if ! grep -q '[^[:space:]]' "$decoded"; then
+          echo "::error::APP_ENV decodes to an empty .env"; exit 1
+        fi
+        if [ -z "$ENV_SAMPLE" ]; then
+          echo "APP_ENV decodes (no env_sample -- required keys not checked)"; exit 0
+        fi
+        if [ ! -f "$ENV_SAMPLE" ]; then
+          echo "::error::env_sample '$ENV_SAMPLE' not found in repo"; exit 1
+        fi
+        keys=$(tr -d '\r' < "$ENV_SAMPLE" | grep -E '^[A-Za-z_][A-Za-z0-9_]*=' \
+          | grep -v -E '#[[:space:]]*optional[[:space:]]*$' | cut -d= -f1 || true)
+        if [ -z "$keys" ]; then
+          echo "::error::no required keys in $ENV_SAMPLE"; exit 1
+        fi
+        missing=""
+        exported=""
+        for key in $keys; do
+          value=$(tr -d '\r' < "$decoded" | grep -E "^${key}=" | tail -n 1 | cut -d= -f2- \
+            | sed -e 's/^["'\'']//' -e 's/["'\'']$//' || true)
+          trimmed=$(printf '%s' "$value" | tr -d '[:space:]')
+          case "$trimmed" in
+            ''|'<'*'>')
+              # "export KEY=" -> compose env_file no read it. say so, not "missing".
+              if tr -d '\r' < "$decoded" | grep -q -E "^export[[:space:]]+${key}="; then
+                exported="$exported $key"
+              else
+                missing="$missing $key"
+              fi
+              ;;
+          esac
+        done
+        if [ -n "$exported" ]; then
+          echo "::error::APP_ENV uses 'export KEY=' (not supported, drop 'export'):$exported"
+        fi
+        if [ -n "$missing" ]; then
+          echo "::error::APP_ENV missing, blank or placeholder:$missing -- deploy stopped, server untouched"
+        fi
+        if [ -n "$exported$missing" ]; then
+          exit 1
+        fi
+        echo "APP_ENV has every required key in $ENV_SAMPLE"
