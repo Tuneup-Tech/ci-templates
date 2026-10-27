@@ -33,12 +33,13 @@ case "$DEPLOY" in
     if [ "${LIVENESS:-0}" -gt 0 ] 2>/dev/null; then head="$head, stayed up ${LIVENESS}s"; fi
     ;;
   cancelled) head="⚪ <b>$APP_H deploy cancelled</b>" ;;
+  skipped) head="⚪ <b>$APP_H deploy skipped</b>" ;;
   *) head="❌ <b>$APP_H deploy FAILED</b>" ;;
 esac
 
 # failed step + error line. attempt-scoped so a rerun reports its own failure.
 fail=""
-if [ "$DEPLOY" != "success" ] && [ "$DEPLOY" != "cancelled" ]; then
+if [ "$DEPLOY" = "failure" ]; then
   JOBS_API="$RUN_API/attempts/$RUN_ATTEMPT/jobs"
   step=$(q "$JOBS_API" '[.jobs[]? as $j | $j.steps[]? | select(.conclusion=="failure") | "\($j.name) → \(.name)"][0] // empty')
   job_id=$(q "$JOBS_API" '[.jobs[]? | select(.conclusion=="failure") | .id][0] // empty')
@@ -56,6 +57,9 @@ if [ "$DEPLOY" != "success" ] && [ "$DEPLOY" != "cancelled" ]; then
       err=${err#*::error::}
     fi
   fi
+  # server-side values no be github secrets -> not masked. scrub obvious ones.
+  err=$(printf '%s' "$err" | sed -E -e 's#://[^:/@ ]+:[^@ ]+@#://***@#g' \
+    -e 's/((key|secret|token|password|passwd|dsn)[A-Za-z_]*[=:][[:space:]]*)[^[:space:]]+/\1***/Ig')
   [ -n "$step" ] && fail="Failed at: <b>$(printf '%s' "$step" | esc)</b>"
   [ -n "$err" ] && fail="$fail
 <code>$(printf '%s' "$err" | cut -c1-300 | esc)</code>"
@@ -112,11 +116,18 @@ if [ "${DRY_RUN:-}" = "1" ]; then
   exit 0
 fi
 
-code=$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' \
-  "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
-  --data-urlencode "chat_id=$TG_CHAT" \
-  --data-urlencode "parse_mode=HTML" \
-  --data-urlencode "disable_web_page_preview=true" \
-  --data-urlencode "text=$text" 2>/dev/null || true)
+send() {
+  curl -sS --max-time 15 -o /dev/null -w '%{http_code}' \
+    "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+    --data-urlencode "chat_id=$TG_CHAT" \
+    --data-urlencode "disable_web_page_preview=true" "$@" 2>/dev/null || true
+}
+code=$(send --data-urlencode "parse_mode=HTML" --data-urlencode "text=$text")
+if [ "$code" = "400" ]; then
+  # html rejected (odd char slipped through). failure msg matter most -> resend plain.
+  plain=$(printf '%s' "$text" | sed -E 's/<[^>]+>//g; s/&lt;/</g; s/&gt;/>/g; s/&amp;/\&/g')
+  code=$(send --data-urlencode "text=$plain
+$RUN_URL")
+fi
 [ "$code" = "200" ] || echo "::warning::Telegram deploy message not sent (HTTP ${code:-none})"
 exit 0

@@ -432,8 +432,8 @@ jobs:
         uses: Tuneup-Tech/ci-templates/.github/actions/deploy-notify@master
         with:
           app: ${{ inputs.image_name }}
-          # build failed/cancelled -> deploy skipped. report the build's result.
-          result: ${{ needs.deploy.result == 'skipped' && needs.build-and-push.result || needs.deploy.result }}
+          # build not ok -> its result (deploy never ran). else deploy's own (skipped stays skipped).
+          result: ${{ needs.build-and-push.result != 'success' && needs.build-and-push.result || needs.deploy.result }}
           ref: ${{ inputs.ref }}
           liveness_seconds: ${{ inputs.liveness_seconds }}
           telegram_bot_token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
