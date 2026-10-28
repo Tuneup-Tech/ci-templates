@@ -59,7 +59,7 @@ For **infrastructure-only** repos (traefik, uptime-kuma, etc.) — no build step
 | `ssh_port` | ❌ | `22` | SSH port |
 | `has_env` | ❌ | `false` | Write the `APP_ENV` secret (base64) as `.env` on the server |
 | `env_sample` | ❌ | `""` | Repo path listing required `APP_ENV` keys (e.g. `.env-sample`). Checked on the runner before anything touches the server; a missing, blank or `<placeholder>` key stops the deploy. Lines ending `# optional` are skipped. |
-| `liveness_seconds` | ❌ | `60` | After deploy, watch the stack this long; fail the run if any container stopped, restarted or went unhealthy (prints its last 40 log lines). A container that exited `0` (one-shot job) is fine. `0` skips. |
+| `liveness_seconds` | ❌ | `60` | After deploy, watch the stack this long; fail the run if any container stopped, restarted or went unhealthy (prints its last 40 log lines). A one-shot container (restart policy `no`) that exited `0` is fine; a long-running one that exited `0` still fails. `0` skips. |
 | secrets `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | ❌ | — | Same per-deploy Telegram message as `docker-build-push-deploy`. Callers that list secrets one by one (not `secrets: inherit`) must pass these two as well. Unset = no message. |
 
 > `docker compose up -d` returns as soon as containers *start*. `liveness_seconds` catches a stack that crash-loops after a green deploy. It is the shared `.github/actions/verify-stayed-up` action, also used by `docker-build-push-deploy`.

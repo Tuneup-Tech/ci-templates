@@ -26,8 +26,9 @@ inputs:
     default: "60"
   allow_clean_exit:
     description: >-
-      true = a container that exited 0 is fine (one-shot jobs in infra
-      stacks). false = any non-running container fails (apps).
+      true = a container that exited 0 AND has restart policy "no" is
+      fine (one-shot jobs in infra stacks). Long-running containers that
+      exit 0 still fail. false = any non-running container fails (apps).
     required: false
     default: "false"
 runs:
@@ -46,17 +47,18 @@ runs:
         key: ${{ inputs.key }}
         port: ${{ inputs.port }}
         envs: SERVICES,WAIT_S,ALLOW_CLEAN_EXIT
-        command_timeout: 15m
+        # watch window + 5m slack, so a long seconds no get killed mid-sleep
+        command_timeout: ${{ format('{0}s', fromJSON(inputs.seconds) + 300) }}
         script: |
           set -eu
           cd ${{ inputs.server_path }}
 
           snapshot() {
             # SERVICES unquoted on purpose: word-split into one arg per service
-            for ID in $(docker compose ps -aq $SERVICES); do
+            for ID in $(docker compose ps -aq ${SERVICES:-}); do
               # container gone between ps and inspect = report it, not die silently under set -e
-              docker inspect --format='{{.Name}} {{.State.Status}} {{.RestartCount}} {{.State.StartedAt}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.State.ExitCode}}' "$ID" 2>/dev/null \
-                || echo "$ID vanished 0 - none 1"
+              docker inspect --format='{{.Name}} {{.State.Status}} {{.RestartCount}} {{.State.StartedAt}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.State.ExitCode}} {{with .HostConfig.RestartPolicy.Name}}{{.}}{{else}}no{{end}}' "$ID" 2>/dev/null \
+                || echo "$ID vanished 0 - none 1 always"
             done
           }
           BEFORE=$(snapshot)
@@ -69,12 +71,12 @@ runs:
           echo "$AFTER"
 
           BAD=""
-          while read -r NAME STATUS RESTARTS STARTED HEALTH EXITCODE; do
+          while read -r NAME STATUS RESTARTS STARTED HEALTH EXITCODE POLICY; do
             [ -n "$NAME" ] || continue
             WAS=$(echo "$BEFORE" | awk -v n="$NAME" '$1==n {print $3}')
             # StartedAt too: autoheal `docker restart` no bump RestartCount
             WAS_STARTED=$(echo "$BEFORE" | awk -v n="$NAME" '$1==n {print $4}')
-            if [ "$STATUS" = "exited" ] && [ "$EXITCODE" = "0" ] && [ "$ALLOW_CLEAN_EXIT" = "true" ]; then :
+            if [ "$STATUS" = "exited" ] && [ "$EXITCODE" = "0" ] && [ "$POLICY" = "no" ] && [ "$ALLOW_CLEAN_EXIT" = "true" ]; then :
             elif [ "$STATUS" != "running" ]; then BAD="$BAD $NAME:$STATUS"
             elif [ -n "$WAS" ] && [ "$RESTARTS" != "$WAS" ]; then BAD="$BAD $NAME:restarted($WAS->$RESTARTS)"
             elif [ -n "$WAS_STARTED" ] && [ "$STARTED" != "$WAS_STARTED" ]; then BAD="$BAD $NAME:restarted"
@@ -86,7 +88,7 @@ runs:
 
           if [ -n "$BAD" ]; then
             echo "::error::${SERVICES:-stack} did not stay up:$BAD"
-            for ID in $(docker compose ps -aq $SERVICES); do
+            for ID in $(docker compose ps -aq ${SERVICES:-}); do
               echo "---- last log lines: $(docker inspect --format='{{.Name}}' "$ID")"
               docker logs --tail 40 "$ID" 2>&1 || true
             done
