@@ -53,7 +53,7 @@ on:
         type: string
         default: "ghcr.io"
       liveness_seconds:
-        description: "After post-deploy, watch the stack this many seconds and fail the run if any container is not running, restarted, or reports unhealthy (a container with restart policy "no" that exited 0, e.g. a one-shot job, is fine). 0 skips the check."
+        description: "After post-deploy, watch the stack this many seconds and fail the run if any container is not running, restarted, or reports unhealthy (a container with restart policy no that exited 0, e.g. a one-shot job, is fine). 0 skips the check."
         required: false
         type: number
         default: 60
