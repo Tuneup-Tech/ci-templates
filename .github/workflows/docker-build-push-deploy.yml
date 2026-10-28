@@ -360,62 +360,17 @@ jobs:
             ${{ inputs.post_deploy_script }}
             docker image prune -f
 
-      # compose up returns once container STARTED, not stayed up. 2026-10-27
-      # true-cost crash-looped 7.5h on missing env var, run said success.
       - name: Verify service stayed up
         if: inputs.liveness_seconds > 0
-        uses: appleboy/ssh-action@v1
+        uses: Tuneup-Tech/ci-templates/.github/actions/verify-stayed-up@master
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ inputs.ssh_port }}
-          command_timeout: 15m
-          script: |
-            set -eu
-            cd ${{ inputs.server_path }}
-            SERVICE="${{ inputs.compose_service }}"
-            WAIT_S=${{ inputs.liveness_seconds }}
-
-            snapshot() {
-              for ID in $(docker compose ps -aq "$SERVICE"); do
-                # container gone between ps and inspect = report it, not die silently under set -e
-                docker inspect --format='{{.Name}} {{.State.Status}} {{.RestartCount}} {{.State.StartedAt}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$ID" 2>/dev/null                   || echo "$ID vanished 0 - none"
-              done
-            }
-            BEFORE=$(snapshot)
-            if [ -z "$BEFORE" ]; then
-              echo "::error::no $SERVICE container exists after deploy"; exit 1
-            fi
-            echo "watching $SERVICE for ${WAIT_S}s"
-            sleep "$WAIT_S"
-            AFTER=$(snapshot)
-            echo "$AFTER"
-
-            BAD=""
-            while read -r NAME STATUS RESTARTS STARTED HEALTH; do
-              [ -n "$NAME" ] || continue
-              WAS=$(echo "$BEFORE" | awk -v n="$NAME" '$1==n {print $3}')
-              # StartedAt too: autoheal `docker restart` no bump RestartCount
-              WAS_STARTED=$(echo "$BEFORE" | awk -v n="$NAME" '$1==n {print $4}')
-              if [ "$STATUS" != "running" ]; then BAD="$BAD $NAME:$STATUS"
-              elif [ -n "$WAS" ] && [ "$RESTARTS" != "$WAS" ]; then BAD="$BAD $NAME:restarted($WAS->$RESTARTS)"
-              elif [ -n "$WAS_STARTED" ] && [ "$STARTED" != "$WAS_STARTED" ]; then BAD="$BAD $NAME:restarted"
-              elif [ "$HEALTH" = "unhealthy" ]; then BAD="$BAD $NAME:unhealthy"
-              fi
-            done <<EOF
-            $AFTER
-            EOF
-
-            if [ -n "$BAD" ]; then
-              echo "::error::$SERVICE did not stay up:$BAD"
-              for ID in $(docker compose ps -aq "$SERVICE"); do
-                echo "---- last log lines: $(docker inspect --format='{{.Name}}' "$ID")"
-                docker logs --tail 40 "$ID" 2>&1 || true
-              done
-              exit 1
-            fi
-            echo "$SERVICE stayed up for ${WAIT_S}s"
+          server_path: ${{ inputs.server_path }}
+          services: ${{ inputs.compose_service }}
+          seconds: ${{ inputs.liveness_seconds }}
 
   # always runs: success, failure or cancel -> one telegram line w/ what shipped
   notify:

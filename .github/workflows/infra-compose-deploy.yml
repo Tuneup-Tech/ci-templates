@@ -52,6 +52,11 @@ on:
         required: false
         type: string
         default: "ghcr.io"
+      liveness_seconds:
+        description: "After post-deploy, watch the stack this many seconds and fail the run if any container is not running, restarted, or reports unhealthy (a container that exited 0, e.g. a one-shot job, is fine). 0 skips the check."
+        required: false
+        type: number
+        default: 60
     secrets:
       SSH_HOST:
         required: true
@@ -64,6 +69,11 @@ on:
       REGISTRY_USERNAME:
         required: false
       REGISTRY_TOKEN:
+        required: false
+      # org/repo secrets. unset = no deploy message, deploy unaffected.
+      TELEGRAM_BOT_TOKEN:
+        required: false
+      TELEGRAM_CHAT_ID:
         required: false
 
 jobs:
@@ -193,3 +203,38 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ inputs.ssh_port }}
           script: ${{ inputs.post_deploy_script }}
+
+      # compose up returns once containers START, not stayed up. same gap
+      # that hid the 2026-10-27 true-cost crash loop. services empty = whole stack.
+      - name: Verify stack stayed up
+        if: inputs.liveness_seconds > 0
+        uses: Tuneup-Tech/ci-templates/.github/actions/verify-stayed-up@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ inputs.ssh_port }}
+          server_path: ${{ inputs.server_path }}
+          services: ${{ inputs.services }}
+          seconds: ${{ inputs.liveness_seconds }}
+          allow_clean_exit: "true"
+
+  # always runs: success, failure or cancel -> one telegram message
+  notify:
+    name: Notify Telegram
+    needs: [deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    steps:
+      - name: Send deploy message
+        uses: Tuneup-Tech/ci-templates/.github/actions/deploy-notify@master
+        with:
+          app: ${{ github.event.repository.name }}
+          result: ${{ needs.deploy.result }}
+          liveness_seconds: ${{ inputs.liveness_seconds }}
+          telegram_bot_token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          telegram_chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
