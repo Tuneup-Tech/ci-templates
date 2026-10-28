@@ -34,6 +34,12 @@ inputs:
 runs:
   using: composite
   steps:
+    # no arithmetic in ${{ }} expressions, so compute here
+    - id: t
+      shell: bash
+      env:
+        SECONDS_IN: ${{ inputs.seconds }}
+      run: echo "timeout=$((SECONDS_IN + 300))s" >> "$GITHUB_OUTPUT"
     # compose up returns once container STARTED, not stayed up. 2026-10-27
     # true-cost crash-looped 7.5h on missing env var, run said success.
     - uses: appleboy/ssh-action@v1
@@ -48,7 +54,7 @@ runs:
         port: ${{ inputs.port }}
         envs: SERVICES,WAIT_S,ALLOW_CLEAN_EXIT
         # watch window + 5m slack, so a long seconds no get killed mid-sleep
-        command_timeout: ${{ format('{0}s', fromJSON(inputs.seconds) + 300) }}
+        command_timeout: ${{ steps.t.outputs.timeout }}
         script: |
           set -eu
           cd ${{ inputs.server_path }}
