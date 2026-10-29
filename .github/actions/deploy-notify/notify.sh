@@ -3,13 +3,26 @@
 # deploy, failed step + error line. Never fails the run -- a notify hiccup
 # must not turn a good deploy red.
 # env: GH_TOKEN REPO RUN_ID RUN_ATTEMPT REF_NAME SHA APP DEPLOY LIVENESS
-#      TG_TOKEN TG_CHAT. DRY_RUN=1 prints instead of sending.
+#      DRY_RUN=1 prints instead of sending.
+# send path (first that is set wins):
+#   direct: TG_TOKEN + TG_CHAT, curl from the runner.
+#   server: SSH_HOST SSH_USER SSH_KEY [SSH_PORT], ssh in and curl from the box.
+#           token lives ONLY in $TG_ENV_FILE on the server (default
+#           /srv/notify/telegram.env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID).
+#           SSH_BIN overrides ssh (tests).
 # json via gh --jq (built-in), no separate jq needed.
 set -uo pipefail
 
-if [ "${DRY_RUN:-}" != "1" ] && { [ -z "${TG_TOKEN:-}" ] || [ -z "${TG_CHAT:-}" ]; }; then
-  echo "::notice::TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set -- no deploy message"
-  exit 0
+VIA=""
+if [ "${DRY_RUN:-}" != "1" ]; then
+  if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT:-}" ]; then
+    VIA=direct
+  elif [ -n "${SSH_HOST:-}" ] && [ -n "${SSH_USER:-}" ] && [ -n "${SSH_KEY:-}" ]; then
+    VIA=server
+  else
+    echo "::notice::no TELEGRAM_* secrets and no SSH_* secrets -- no deploy message"
+    exit 0
+  fi
 fi
 
 esc() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
@@ -116,18 +129,43 @@ if [ "${DRY_RUN:-}" = "1" ]; then
   exit 0
 fi
 
-send() {
-  curl -sS --max-time 15 -o /dev/null -w '%{http_code}' \
-    "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
-    --data-urlencode "chat_id=$TG_CHAT" \
-    --data-urlencode "disable_web_page_preview=true" "$@" 2>/dev/null || true
+# deliver MODE TEXT -> prints http code (or nofile/noenv/sshfail). MODE: html | plain
+deliver() {
+  local mode="$1" body="$2" pm=""
+  [ "$mode" = "html" ] && pm="--data-urlencode parse_mode=HTML"
+  if [ "$VIA" = "direct" ]; then
+    # shellcheck disable=SC2086
+    curl -sS --max-time 15 -o /dev/null -w '%{http_code}'       "https://api.telegram.org/bot$TG_TOKEN/sendMessage"       --data-urlencode "chat_id=$TG_CHAT"       --data-urlencode "disable_web_page_preview=true" $pm       --data-urlencode "text=$body" 2>/dev/null || true
+    return 0
+  fi
+  # server: text on stdin, token read from file on the box, never leaves it
+  local remote='F=${TG_ENV_FILE:-/srv/notify/telegram.env}
+[ -r "$F" ] || { echo nofile; exit 0; }
+. "$F"
+[ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ] || { echo noenv; exit 0; }
+curl -sS --max-time 15 -o /dev/null -w "%{http_code}" "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode disable_web_page_preview=true $PM --data-urlencode text@- 2>/dev/null'
+  printf '%s' "$body" | ${SSH_BIN:-ssh} -i "$KEYF" -p "${SSH_PORT:-22}"     -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new     -o UserKnownHostsFile="$KNOWN" "$SSH_USER@$SSH_HOST" "PM='$pm'; $remote" 2>/dev/null     | tail -n 1 || true
 }
-code=$(send --data-urlencode "parse_mode=HTML" --data-urlencode "text=$text")
+
+if [ "$VIA" = "server" ]; then
+  KEYF=$(mktemp); KNOWN=$(mktemp)
+  trap 'rm -f "$KEYF" "$KNOWN"' EXIT
+  printf '%s
+' "$SSH_KEY" > "$KEYF"
+  chmod 600 "$KEYF"
+fi
+
+code=$(deliver html "$text")
 if [ "$code" = "400" ]; then
   # html rejected (odd char slipped through). failure msg matter most -> resend plain.
-  plain=$(printf '%s' "$text" | sed -E 's/<[^>]+>//g; s/&lt;/</g; s/&gt;/>/g; s/&amp;/\&/g')
-  code=$(send --data-urlencode "text=$plain
+  plain=$(printf '%s' "$text" | sed -E 's/<[^>]+>//g; s/&lt;/</g; s/&gt;/>/g; s/&amp;/&/g')
+  code=$(deliver plain "$plain
 $RUN_URL")
 fi
-[ "$code" = "200" ] || echo "::warning::Telegram deploy message not sent (HTTP ${code:-none})"
+case "$code" in
+  200) ;;
+  nofile) echo "::warning::Telegram not sent: ${TG_ENV_FILE:-/srv/notify/telegram.env} missing or unreadable on the server" ;;
+  noenv) echo "::warning::Telegram not sent: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID empty in the server env file" ;;
+  *) echo "::warning::Telegram deploy message not sent (${VIA}, result: ${code:-none})" ;;
+esac
 exit 0

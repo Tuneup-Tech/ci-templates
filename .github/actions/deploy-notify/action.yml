@@ -23,6 +23,19 @@ inputs:
   telegram_chat_id:
     required: false
     default: ""
+  # no telegram_* above -> send from the server (token read from a file there)
+  ssh_host:
+    required: false
+    default: ""
+  ssh_username:
+    required: false
+    default: ""
+  ssh_private_key:
+    required: false
+    default: ""
+  ssh_port:
+    required: false
+    default: "22"
 runs:
   using: composite
   steps:
@@ -39,6 +52,10 @@ runs:
         LIVENESS: ${{ inputs.liveness_seconds }}
         TG_TOKEN: ${{ inputs.telegram_bot_token }}
         TG_CHAT: ${{ inputs.telegram_chat_id }}
+        SSH_HOST: ${{ inputs.ssh_host }}
+        SSH_USER: ${{ inputs.ssh_username }}
+        SSH_KEY: ${{ inputs.ssh_private_key }}
+        SSH_PORT: ${{ inputs.ssh_port }}
       run: |
         # pinned ref/tag rollback -> resolve to the commit actually deployed
         SHA="${{ github.sha }}"
