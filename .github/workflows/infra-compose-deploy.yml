@@ -238,3 +238,7 @@ jobs:
           liveness_seconds: ${{ inputs.liveness_seconds }}
           telegram_bot_token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           telegram_chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # token read from /srv/notify/telegram.env on the server when no TELEGRAM_* secrets
+          ssh_host: ${{ secrets.SSH_HOST }}
+          ssh_username: ${{ secrets.SSH_USERNAME }}
+          ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}

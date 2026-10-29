@@ -62,6 +62,9 @@ For **infrastructure-only** repos (traefik, uptime-kuma, etc.) — no build step
 | `liveness_seconds` | ❌ | `60` | After deploy, watch the stack this long; fail the run if any container stopped, restarted or went unhealthy (prints its last 40 log lines). A one-shot container (restart policy `no`) that exited `0` is fine; a long-running one that exited `0` still fails. `0` skips. |
 | secrets `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | ❌ | — | Same per-deploy Telegram message as `docker-build-push-deploy`. Callers that list secrets one by one (not `secrets: inherit`) must pass these two as well. Unset = no message. |
 
+**Where the Telegram token lives.** Simplest: no repo secrets at all. With no `TELEGRAM_*` secrets the notify job SSHes to the server (using the repo's existing `SSH_*` secrets) and sends from there, reading `/srv/notify/telegram.env` (`TELEGRAM_BOT_TOKEN=...`, `TELEGRAM_CHAT_ID=...`; root-owned, group-readable by the deploy user, mode 640). One file on the box serves every repo. If `TELEGRAM_*` repo secrets are set they win and the runner sends directly. A missing or empty server file gives a workflow warning, never a failed run.
+
+
 > `docker compose up -d` returns as soon as containers *start*. `liveness_seconds` catches a stack that crash-loops after a green deploy. It is the shared `.github/actions/verify-stayed-up` action, also used by `docker-build-push-deploy`.
 
 > `APP_ENV` replaces the **whole** `.env` on every deploy. Rebuild it from the full sample, never from a single key.
